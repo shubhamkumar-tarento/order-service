@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # order-service
 
 Simple order management REST API on Spring Boot 4 / Java 21. Orders live in an
@@ -102,3 +103,6 @@ Before the first run:
    - `kubeconfig-credentials` - Secret file containing your kubeconfig
 3. Make sure `mvn`, `docker` and `kubectl` are on the agent's PATH.
 4. Tick **PUSH_IMAGE** when deploying to a remote cluster; leave it off locally.
+=======
+# order-service
+>>>>>>> ab991052cc272cd833801bab8c62e1a138472a57
