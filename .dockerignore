@@ -1,0 +1,7 @@
+target/
+.git/
+.mvn/
+.vscode/
+k8s/
+*.md
+Jenkinsfile
