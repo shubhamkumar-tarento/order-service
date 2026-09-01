@@ -1,103 +1,171 @@
-// Runs the same on Linux and Windows agents.
+```groovy
+// Runs commands on both Linux and Windows Jenkins agents.
 def run(String command) {
-	if (isUnix()) {
-		sh command
-	} else {
-		bat command
-	}
+    if (isUnix()) {
+        sh command
+    } else {
+        bat command
+    }
 }
 
 pipeline {
-	agent any
+    agent any
 
-	options {
-		timestamps()
-		buildDiscarder(logRotator(numToKeepStr: '10'))
-		timeout(time: 30, unit: 'MINUTES')
-	}
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
 
-	parameters {
-		string(name: 'K8S_NAMESPACE', defaultValue: 'default', description: 'Namespace to deploy into')
-		booleanParam(name: 'PUSH_IMAGE', defaultValue: false, description: 'Push to the registry (leave off for a local cluster)')
-	}
+    parameters {
+        string(
+            name: 'K8S_NAMESPACE',
+            defaultValue: 'default',
+            description: 'Kubernetes namespace'
+        )
+    }
 
-	environment {
-		// e.g. docker.io/yourusername - leave blank to build a local-only image.
-		REGISTRY    = ''
-		IMAGE_NAME  = 'order-service'
-		IMAGE_TAG   = "${env.BUILD_NUMBER}"
-		IMAGE       = "${env.REGISTRY ? env.REGISTRY + '/' : ''}${env.IMAGE_NAME}:${env.BUILD_NUMBER}"
-	}
+    environment {
+        // Docker Hub username
+        DOCKER_USERNAME = 'shubhamkumar55'
 
-	stages {
-		stage('Checkout') {
-			steps {
-				checkout scm
-			}
-		}
+        // Docker Hub repository
+        IMAGE_NAME = 'order-service'
 
-		stage('Build & Test') {
-			steps {
-				run 'mvn -B clean verify'
-			}
-			post {
-				always {
-					junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-					archiveArtifacts artifacts: 'target/order-service.jar', fingerprint: true, allowEmptyArchive: true
-				}
-			}
-		}
+        // Docker image tag = Jenkins build number
+        IMAGE_TAG = "${BUILD_NUMBER}"
 
-		stage('Docker Build') {
-			steps {
-				run "docker build -t ${IMAGE} -t ${env.REGISTRY ? env.REGISTRY + '/' : ''}${IMAGE_NAME}:latest ."
-			}
-		}
+        // Final Docker image
+        IMAGE = "${DOCKER_USERNAME}/${IMAGE_NAME}:${BUILD_NUMBER}"
+    }
 
-		stage('Docker Push') {
-			when {
-				expression { return params.PUSH_IMAGE && env.REGISTRY?.trim() }
-			}
-			steps {
-				withCredentials([usernamePassword(credentialsId: 'docker-registry-credentials',
-						usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-					run "docker login ${REGISTRY} -u ${DOCKER_USER} -p ${DOCKER_PASS}"
-				}
-				run "docker push ${IMAGE}"
-				run "docker push ${env.REGISTRY ? env.REGISTRY + '/' : ''}${IMAGE_NAME}:latest"
-			}
-		}
+    stages {
 
-		stage('Deploy to Kubernetes') {
-			steps {
-				// 'kubeconfig-credentials' is a Secret file credential holding a kubeconfig.
-				withCredentials([file(credentialsId: 'kubeconfig-credentials', variable: 'KUBECONFIG')]) {
-					run "kubectl -n ${params.K8S_NAMESPACE} apply -f k8s/deployment.yaml -f k8s/service.yaml"
-					run "kubectl -n ${params.K8S_NAMESPACE} set image deployment/order-service order-service=${IMAGE} --record=false"
-					run "kubectl -n ${params.K8S_NAMESPACE} rollout status deployment/order-service --timeout=180s"
-				}
-			}
-		}
+        // =========================================================
+        // 1. Checkout GitHub
+        // =========================================================
+        stage('Checkout GitHub') {
+            steps {
+                echo 'Checking out source code from GitHub...'
 
-		stage('Smoke Test') {
-			steps {
-				withCredentials([file(credentialsId: 'kubeconfig-credentials', variable: 'KUBECONFIG')]) {
-					// Hit the service from inside the cluster so no Ingress is needed.
-					run "kubectl -n ${params.K8S_NAMESPACE} run smoke-${BUILD_NUMBER} --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- curl -sf http://order-service:8080/actuator/health"
-				}
-			}
-		}
-	}
+                checkout scm
+            }
+        }
 
-	post {
-		success {
-			echo "Deployed ${IMAGE} to namespace ${params.K8S_NAMESPACE}"
-		}
-		failure {
-			echo "Build ${env.BUILD_NUMBER} failed - check the stage log above."
-		}
-		always {
-			cleanWs()
-		}
-	}
+
+        // =========================================================
+        // 2. Build Spring Boot
+        // =========================================================
+        stage('Build Spring Boot') {
+            steps {
+                echo 'Building Spring Boot application...'
+
+                run 'mvn -B clean package -DskipTests'
+            }
+
+            post {
+                always {
+                    archiveArtifacts(
+                        artifacts: 'target/*.jar',
+                        fingerprint: true,
+                        allowEmptyArchive: true
+                    )
+                }
+            }
+        }
+
+
+        // =========================================================
+        // 3. Build Docker Image
+        // =========================================================
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image: ${IMAGE}"
+
+                run "docker build -t ${IMAGE} -t ${DOCKER_USERNAME}/${IMAGE_NAME}:latest ."
+            }
+        }
+
+
+        // =========================================================
+        // 4. Login to Docker Hub
+        // =========================================================
+        stage('Login to Docker Hub') {
+            steps {
+                echo 'Logging in to Docker Hub...'
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-registry-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_TOKEN'
+                    )
+                ]) {
+                    run 'echo %DOCKER_TOKEN% | docker login -u %DOCKER_USER% --password-stdin'
+                }
+            }
+        }
+
+
+        // =========================================================
+        // 5. Push Docker Image
+        // =========================================================
+        stage('Push Docker Image') {
+            steps {
+                echo "Pushing ${IMAGE} to Docker Hub..."
+
+                run "docker push ${IMAGE}"
+
+                run "docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:latest"
+            }
+        }
+
+
+        // =========================================================
+        // 6. Deploy to Kubernetes
+        // =========================================================
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo "Deploying ${IMAGE} to Kubernetes..."
+
+                withCredentials([
+                    file(
+                        credentialsId: 'kubeconfig-credentials',
+                        variable: 'KUBECONFIG'
+                    )
+                ]) {
+
+                    run "kubectl -n ${params.K8S_NAMESPACE} apply -f k8s/deployment.yaml"
+                    run "kubectl -n ${params.K8S_NAMESPACE} apply -f k8s/service.yaml"
+
+                    run "kubectl -n ${params.K8S_NAMESPACE} set image deployment/order-service order-service=${IMAGE}"
+
+                    run "kubectl -n ${params.K8S_NAMESPACE} rollout status deployment/order-service --timeout=180s"
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo "=============================================="
+            echo "PIPELINE COMPLETED SUCCESSFULLY"
+            echo "Docker Image: ${IMAGE}"
+            echo "Kubernetes Namespace: ${params.K8S_NAMESPACE}"
+            echo "=============================================="
+        }
+
+        failure {
+            echo "=============================================="
+            echo "PIPELINE FAILED"
+            echo "Check the failed stage in Jenkins Console Output."
+            echo "=============================================="
+        }
+
+        always {
+            cleanWs()
+        }
+    }
 }
+```
