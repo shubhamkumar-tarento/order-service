@@ -1,4 +1,4 @@
-```groovy
+
 // Runs commands on both Linux and Windows Jenkins agents.
 def run(String command) {
     if (isUnix()) {
@@ -166,6 +166,5 @@ pipeline {
         always {
             cleanWs()
         }
-    }
+	}
 }
-```
