@@ -133,47 +133,71 @@ stages {
     // =========================================================
     // 6. Deploy to Kubernetes
     // =========================================================
-    stage('Deploy to Kubernetes') {
-        steps {
-            echo "Deploying ${IMAGE} to Kubernetes..."
 
-            withCredentials([
-                file(
-                    credentialsId: 'kubeconfig-credentials',
-                    variable: 'KUBECONFIG'
-                )
-            ]) {
+stage('Deploy to Kubernetes') {
+    steps {
+        echo "Deploying ${IMAGE} to Kubernetes..."
 
-                // Pin this build's tag into the manifest BEFORE applying, so
-                // the cluster never briefly runs the checked-in :latest tag
-                // and a later re-apply cannot undo the rollout.
-                sh '''
-                    sed -E "s#^([[:space:]]*)image:[[:space:]].*#\\1image: ${IMAGE}#" \
+        withCredentials([
+            file(
+                credentialsId: 'kubeconfig-credentials',
+                variable: 'KUBECONFIG'
+            )
+        ]) {
+
+            sh '''
+                echo "=============================================="
+                echo "Testing Kubernetes configuration"
+                echo "=============================================="
+
+                echo "KUBECONFIG file:"
+                ls -lh "$KUBECONFIG"
+
+                echo "Current Kubernetes context:"
+                kubectl --kubeconfig="$KUBECONFIG" config current-context
+
+                echo "Kubernetes nodes:"
+                kubectl --kubeconfig="$KUBECONFIG" get nodes
+
+                echo "=============================================="
+                echo "Rendering deployment"
+                echo "=============================================="
+
+                sed -E "s#^([[:space:]]*)image:[[:space:]].*#\\1image: ${IMAGE}#" \
                     k8s/deployment.yaml > k8s/deployment.rendered.yaml
 
-                    echo "--- rendered image line ---"
-                    grep "image:" k8s/deployment.rendered.yaml
-                '''
+                echo "--- rendered image line ---"
+                grep "image:" k8s/deployment.rendered.yaml
 
-                sh """
-                    kubectl -n ${params.K8S_NAMESPACE} \
+                echo "=============================================="
+                echo "Applying deployment"
+                echo "=============================================="
+
+                kubectl --kubeconfig="$KUBECONFIG" \
+                    -n "${K8S_NAMESPACE}" \
                     apply -f k8s/deployment.rendered.yaml
-                """
 
-                sh """
-                    kubectl -n ${params.K8S_NAMESPACE} \
+                echo "=============================================="
+                echo "Applying service"
+                echo "=============================================="
+
+                kubectl --kubeconfig="$KUBECONFIG" \
+                    -n "${K8S_NAMESPACE}" \
                     apply -f k8s/service.yaml
-                """
 
-                sh """
-                    kubectl -n ${params.K8S_NAMESPACE} \
+                echo "=============================================="
+                echo "Waiting for rollout"
+                echo "=============================================="
+
+                kubectl --kubeconfig="$KUBECONFIG" \
+                    -n "${K8S_NAMESPACE}" \
                     rollout status deployment/order-service \
                     --timeout=180s
-                """
             }
         }
     }
 }
+
 
 
 // =============================================================
