@@ -12,6 +12,7 @@ spec:
     app: order-service
   ports:
     - name: http
+      # Service port stays 8080; the pod listens on 8081 (named port "http").
       port: 8080
-      targetPort: 8080
+      targetPort: http
       nodePort: 30080

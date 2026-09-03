@@ -25,12 +25,14 @@ spec:
         runAsUser: 1001
       containers:
         - name: order-service
-          # Jenkins overwrites this tag with `kubectl set image` on every build.
-          image: order-service:latest
+          # Jenkins rewrites this tag before `kubectl apply` on every build.
+          image: shubhamkumar55/order-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8080
+              # Must match server.port in application.properties and the
+              # EXPOSE line in the Dockerfile.
+              containerPort: 8081
           env:
             - name: JAVA_OPTS
               value: "-XX:MaxRAMPercentage=75.0"

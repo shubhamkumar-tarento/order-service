@@ -26,7 +26,7 @@ environment {
     IMAGE_TAG = "${BUILD_NUMBER}"
 
     // Final Docker image
-    IMAGE = "${DOCKER_USERNAME}/${IMAGE_NAME}:${BUILD_NUMBER}"
+    IMAGE = "${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
 }
 
 stages {
@@ -44,17 +44,26 @@ stages {
 
 
     // =========================================================
-    // 2. Build Spring Boot
+    // 2. Build & test Spring Boot
     // =========================================================
     stage('Build Spring Boot') {
         steps {
-            echo 'Building Spring Boot application...'
+            echo 'Building and testing Spring Boot application...'
 
-            sh 'mvn -B clean package -DskipTests'
+            // Maven wrapper pins the Maven version, so the agent only
+            // needs a JDK on PATH. `verify` runs the test suite.
+            sh 'chmod +x ./mvnw'
+
+            sh './mvnw -B clean verify'
         }
 
         post {
             always {
+                junit(
+                    testResults: 'target/surefire-reports/*.xml',
+                    allowEmptyResults: false
+                )
+
                 archiveArtifacts(
                     artifacts: 'target/*.jar',
                     fingerprint: true,
@@ -72,6 +81,8 @@ stages {
         steps {
             echo "Building Docker image: ${IMAGE}"
 
+            // Multi-stage Dockerfile compiles the jar itself, so the build
+            // context does not depend on the target/ directory above.
             sh """
                 docker build \
                 -t ${IMAGE} \
@@ -133,20 +144,25 @@ stages {
                 )
             ]) {
 
+                // Pin this build's tag into the manifest BEFORE applying, so
+                // the cluster never briefly runs the checked-in :latest tag
+                // and a later re-apply cannot undo the rollout.
+                sh '''
+                    sed -E "s#^([[:space:]]*)image:[[:space:]].*#\\1image: ${IMAGE}#" \
+                    k8s/deployment.yaml > k8s/deployment.rendered.yaml
+
+                    echo "--- rendered image line ---"
+                    grep "image:" k8s/deployment.rendered.yaml
+                '''
+
                 sh """
                     kubectl -n ${params.K8S_NAMESPACE} \
-                    apply -f k8s/deployment.yaml
+                    apply -f k8s/deployment.rendered.yaml
                 """
 
                 sh """
                     kubectl -n ${params.K8S_NAMESPACE} \
                     apply -f k8s/service.yaml
-                """
-
-                sh """
-                    kubectl -n ${params.K8S_NAMESPACE} \
-                    set image deployment/order-service \
-                    order-service=${IMAGE}
                 """
 
                 sh """
@@ -181,6 +197,9 @@ post {
     }
 
     always {
+        // Drop the registry credentials from the agent's docker config.
+        sh 'docker logout || true'
+
         cleanWs()
     }
 }

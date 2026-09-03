@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Rendered by the Jenkins deploy stage (image tag substituted in).
+k8s/deployment.rendered.yaml

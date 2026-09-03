@@ -1,6 +1,14 @@
 .git/
-.mvn/
+.gitignore
+.gitattributes
 .vscode/
 k8s/
+# The image builds the jar itself (multi-stage), so host build output
+# must not leak into the build context.
+target/
+# Maven wrapper is unused inside the image - the builder stage supplies Maven.
+.mvn/
+mvnw
+mvnw.cmd
 *.md
 Jenkinsfile
